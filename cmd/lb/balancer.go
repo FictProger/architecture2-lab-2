@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/FictProger/architecture2-lab-2/httptools"
@@ -24,9 +26,9 @@ var (
 var (
 	timeout     = time.Duration(*timeoutSec) * time.Second
 	serversPool = []string{
-		"server1:8080",
-		"server2:8080",
-		"server3:8080",
+		"localhost:8080",
+		"localhost:8081",
+		"localhost:8082",
 	}
 )
 
@@ -51,7 +53,7 @@ func health(dst string) bool {
 	return true
 }
 
-func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
+func forward(reqCnt int, dst string, rw http.ResponseWriter, r *http.Request) error {
 	ctx, _ := context.WithTimeout(r.Context(), timeout)
 	fwdRequest := r.Clone(ctx)
 	fwdRequest.RequestURI = ""
@@ -59,8 +61,8 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 	fwdRequest.URL.Scheme = scheme()
 	fwdRequest.Host = dst
 
-	fwdRequest.Header.Set("lb-author", "rapid")
-	fwdRequest.Header.Set("lb-req-cnt", "1")
+	fwdRequest.Header.Set("lb-author", "a")
+	fwdRequest.Header.Set("lb-req-cnt", strconv.Itoa(reqCnt))
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
 	if err == nil {
@@ -87,22 +89,65 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+func existAlive(poolAlive *[]bool) (int, error) {
+	for i, v := range *poolAlive {
+		if v == true {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("not exist alive server")
+}
+
+func chooseServer(poolTraffic []int, poolAlive *[]bool) (int, error) {
+	index, err := existAlive(poolAlive)
+	if err != nil {
+		return index, err
+	}
+
+	value := poolTraffic[index]
+	for i := index + 1; i < len(poolTraffic); i += 1 {
+		if poolTraffic[i] < value && (*poolAlive)[i] {
+			index = i
+			value = poolTraffic[i]
+		}
+	}
+	return index, nil
+}
+
 func main() {
 	flag.Parse()
 
-	// TODO: Використовуйте дані про стан сервреа, щоб підтримувати список тих серверів, яким можна відправляти ззапит.
-	for _, server := range serversPool {
+	serversPoolAlive := make([]bool, len(serversPool))
+	for i, server := range serversPool {
 		server := server
+		serverIndex := i
+
+		var mu sync.Mutex
 		go func() {
 			for range time.Tick(10 * time.Second) {
-				log.Println(server, health(server))
+				log.Println(server, health(server)) //
+				mu.Lock()                           //
+				serversPoolAlive[serverIndex] = health(server)
+				mu.Unlock() //
 			}
 		}()
 	}
 
+	reqCnt := 0
+	serversPoolTraffic := make([]int, len(serversPool))
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		// TODO: Рееалізуйте свій алгоритм балансувальника.
-		forward(serversPool[0], rw, r)
+		serverIndex, err := chooseServer(serversPoolTraffic, &serversPoolAlive)
+		if err != nil {
+			log.Printf("Error: %v", err)
+			return
+		}
+
+		forward(reqCnt, serversPool[serverIndex], rw, r)
+
+		contentLength, _ := strconv.Atoi(rw.Header().Get("Content-Length"))
+		serversPoolTraffic[serverIndex] += contentLength
+
+		reqCnt += 1
 	}))
 
 	log.Println("Starting load balancer...")
