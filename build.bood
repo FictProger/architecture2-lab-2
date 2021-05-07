@@ -20,4 +20,8 @@ go_testedbinary {
   testPkg: "./cmd/lb/..."
 }
 
-// TODO: Додайте модуль для інтеграційних тестів.
+go_testedbinary {
+  name: "integration",
+  pkg: "github.com/FictProger/architecture2-lab-2/integration",
+  testPkg: "./integration/..."
+}
