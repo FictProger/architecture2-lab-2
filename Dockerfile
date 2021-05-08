@@ -2,7 +2,6 @@ FROM golang:1.15 as build
 
 RUN apt-get update && apt-get install -y ninja-build
 
-# TODO: Змініть на власну реалізацію системи збірки
 WORKDIR /go/src
 RUN git clone https://github.com/FictProger/architecture2-lab-1
 WORKDIR /go/src/architecture2-lab-1
