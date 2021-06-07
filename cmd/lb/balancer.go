@@ -30,6 +30,7 @@ var (
 		"localhost:8081",
 		"localhost:8082",
 	}
+	mu sync.Mutex
 )
 
 func scheme() string {
@@ -122,7 +123,6 @@ func main() {
 		server := server
 		serverIndex := i
 
-		var mu sync.Mutex
 		go func() {
 			for range time.Tick(10 * time.Second) {
 				log.Println(server, health(server)) //
@@ -136,13 +136,17 @@ func main() {
 	reqCnt := 0
 	serversPoolTraffic := make([]int, len(serversPool))
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		serverIndex, err := chooseServer(serversPoolTraffic, &serversPoolAlive)
 		if err != nil {
 			log.Printf("Error: %v", err)
+			mu.Unlock()
 			return
 		}
+		server := serversPool[serverIndex]
+		mu.Unlock()
 
-		forward(reqCnt, serversPool[serverIndex], rw, r)
+		forward(reqCnt, server, rw, r)
 
 		contentLength, _ := strconv.Atoi(rw.Header().Get("Content-Length"))
 		serversPoolTraffic[serverIndex] += contentLength
